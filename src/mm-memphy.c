@@ -115,7 +115,13 @@ int MEMPHY_write(struct memphy_struct *mp, int addr, BYTE data)
 int MEMPHY_format(struct memphy_struct *mp, int pagesz)
 {
    /* This setting come with fixed constant PAGESZ */
+   if (mp == NULL || pagesz <= 0) {
+      return -1;
+   }
    int numfp = mp->maxsz / pagesz;
+   if (numfp <= 0) {
+      return -1;
+   }
    struct framephy_struct *newfst, *fst;
    int iter = 0;
 
@@ -125,6 +131,7 @@ int MEMPHY_format(struct memphy_struct *mp, int pagesz)
    /* Init head of free framephy list */
    fst = malloc(sizeof(struct framephy_struct));
    fst->fpn = iter;
+   fst->fp_next = NULL;
    mp->free_fp_list = fst;
 
    /* We have list with first element, fill in the rest num-1 element member*/
@@ -141,7 +148,10 @@ int MEMPHY_format(struct memphy_struct *mp, int pagesz)
 }
 
 int MEMPHY_get_freefp(struct memphy_struct *mp, int *retfpn)
-{
+{  
+   if (mp == NULL || retfpn == NULL) {
+   return -1;
+   }
    struct framephy_struct *fp = mp->free_fp_list;
 
    if (fp == NULL)
@@ -163,7 +173,23 @@ int MEMPHY_dump(struct memphy_struct *mp)
   /*TODO dump memphy contnt mp->storage
    *     for tracing the memory content
    */
-   return 0;
+  if (mp == NULL) {
+   return -1;
+}
+
+/* Simple dump - can be enhanced to show more details */
+printf("MEMPHY dump (%s access):\n", mp->rdmflg ? "random" : "sequential");
+printf("  Max size: %d bytes\n", mp->maxsz);
+printf("  Free frames: ");
+
+struct framephy_struct *fp = mp->free_fp_list;
+while (fp != NULL) {
+   printf("%d ", fp->fpn);
+   fp = fp->fp_next;
+}
+printf("\n");
+
+return 0;
 }
 
 int MEMPHY_put_freefp(struct memphy_struct *mp, int fpn)
