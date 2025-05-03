@@ -140,8 +140,7 @@ int MEMPHY_format(struct memphy_struct *mp, int pagesz)
    return 0;
 }
 
-int MEMPHY_get_freefp(struct memphy_struct *mp, int *retfpn)
-{
+int MEMPHY_get_freefp(struct memphy_struct *mp, int *retfpn){
    struct framephy_struct *fp = mp->free_fp_list;
 
    if (fp == NULL)
@@ -158,11 +157,27 @@ int MEMPHY_get_freefp(struct memphy_struct *mp, int *retfpn)
    return 0;
 }
 
-int MEMPHY_dump(struct memphy_struct *mp)
-{
+int MEMPHY_dump(struct memphy_struct *mp){
   /*TODO dump memphy contnt mp->storage
    *     for tracing the memory content
    */
+   printf("===== PHYSICAL MEMORY DUMP =====\n");
+   
+   if(mp == NULL || mp->storage == NULL){ 
+      printf("MEMPHY_dump: Memory is NUll! \n");
+      return -1;
+   }
+   
+   for (int addr = 0; addr < mp->maxsz; addr++) {
+      // BYTE data;
+      // MEMPHY_read(mp, addr, &data);
+      if (mp->storage[addr] != 0) {
+         printf("BYTE %08X: %d\n", addr, mp->storage[addr]);
+     }
+  }
+   printf("===== PHYSICAL MEMORY END-DUMP =====\n");
+   printf("================================================================\n");
+
    return 0;
 }
 

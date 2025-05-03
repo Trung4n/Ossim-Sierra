@@ -12,37 +12,74 @@
 #include "syscall.h"
 #include "stdio.h"
 #include "libmem.h"
+#include "queue.h"
+#include <string.h>
+#include <stdlib.h>
 
-int __sys_killall(struct pcb_t *caller, struct sc_regs* regs)
-{
+int __sys_killall(struct pcb_t *caller, struct sc_regs* regs){
     char proc_name[100];
     uint32_t data;
-
-    //hardcode for demo only
     uint32_t memrg = regs->a1;
-    
-    /* TODO: Get name of the target proc */
-    //proc_name = libread..
     int i = 0;
-    data = 0;
-    while(data != -1){
-        libread(caller, memrg, i, &data);
-        proc_name[i]= data;
-        if(data == -1) proc_name[i]='\0';
+    /* Read target process name from user-space memory */
+    do{
+        if(libread(caller, memrg, i, &data) < 0){
+            printf("Error reading from memory region %d\n", memrg);
+            return -1;
+        }
+        proc_name[i] = (char) data;
         i++;
-    }
+    }while(data != -1 && i < sizeof(proc_name) - 1);
+    proc_name[i - 1] = '\0';  // Terminate proc name string
+
     printf("The procname retrieved from memregionid %d is \"%s\"\n", memrg, proc_name);
 
-    /* TODO: Traverse proclist to terminate the proc
-     *       stcmp to check the process match proc_name
-     */
-    //caller->running_list
-    //caller->mlq_ready_queu
+    i = 0;
+    /* === Traverse running list to kill procs with matching name === */
+    while (i < caller->running_list->size) {
+        struct pcb_t *target_proc = caller->running_list->proc[i];
+        
+        // Skip null proc or self
+        if (caller->running_list->proc[i] == NULL || target_proc->pid == caller->pid) {
+            i++;
+            continue;
+        }
 
-    /* TODO Maching and terminating 
-     *       all processes with given
-     *        name in var proc_name
-     */
+        // Match name by checking if path contains proc_name
+        if (strstr(target_proc->path, proc_name) != NULL) {
+
+#ifdef DEBUG
+            printf("Terminating process PID: %d PRIO: %d\n", target_proc->pid, target_proc->prio);
+#endif      
+            // Mark process as terminated by setting PC to EOF
+            peek_at_index(caller->running_list, i);
+            target_proc->pc = target_proc->code->size;  // Force exit
+            continue; // Stay at index i since current slot is shifted
+        } 
+        i++;
+    }
+
+    /* === Traverse MLQ ready queues to kill procs with matching name === */
+    for(int q = 0; q < MAX_PRIO; q++){
+        i = 0;
+        while(!empty(&caller->mlq_ready_queue[q]) && i < caller->mlq_ready_queue[q].size) {
+            struct pcb_t *target_proc = caller->mlq_ready_queue[q].proc[i];
+            
+            if (target_proc == NULL || target_proc->pid == caller->pid) {
+                i++;
+                continue;
+            }
+            if (strstr(target_proc->path, proc_name) != NULL) {
+#ifdef DEBUG
+                printf("Terminating process PID: %d PRIO: %d\n", target_proc->pid, target_proc->prio);
+#endif      
+                peek_at_index(&caller->mlq_ready_queue[q], i); // Dealloc PCB
+                free(target_proc);
+                continue;
+            }
+            i++;
+        }
+    }
 
     return 0; 
 }

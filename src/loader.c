@@ -41,7 +41,6 @@ struct pcb_t * load(const char * path) {
 		(struct page_table_t*)malloc(sizeof(struct page_table_t));
 	proc->bp = PAGE_SIZE;
 	proc->pc = 0;
-
 	/* Read process code from file */
 	FILE * file;
 	if ((file = fopen(path, "r")) == NULL) {
@@ -55,6 +54,7 @@ struct pcb_t * load(const char * path) {
 	proc->code->text = (struct inst_t*)malloc(
 		sizeof(struct inst_t) * proc->code->size
 	);
+	
 	uint32_t i = 0;
 	char buf[200];
 	for (i = 0; i < proc->code->size; i++) {

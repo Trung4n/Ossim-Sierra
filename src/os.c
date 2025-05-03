@@ -2,6 +2,7 @@
 #include "cpu.h"
 #include "timer.h"
 #include "sched.h"
+#include "queue.h"
 #include "loader.h"
 #include "mm.h"
 
@@ -57,13 +58,22 @@ static void * cpu_routine(void * args) {
 		 	* ready queue */
 			proc = get_proc();
 			if (proc == NULL) {
-                           next_slot(timer_id);
-                           continue; /* First load failed. skip dummy load */
-                        }
+				if(done){
+					printf("\tCPU %d stopped\n", id);
+					break;
+				}
+                next_slot(timer_id);
+                continue; /* First load failed. skip dummy load */
+            }
+// #ifdef DEBUG
+// 			printf("\tCPU %d: Get process %2d from mlq queue\n",
+// 				id, proc->pid);
+// #endif
 		}else if (proc->pc == proc->code->size) {
 			/* The porcess has finish it job */
 			printf("\tCPU %d: Processed %2d has finished\n",
 				id ,proc->pid);
+			peek_at_id(proc->running_list, proc->pid);
 			free(proc);
 			proc = get_proc();
 			time_left = 0;

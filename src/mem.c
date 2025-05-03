@@ -48,6 +48,8 @@ static struct trans_table_t * get_trans_table(
 	int i;
 	for (i = 0; i < page_table->size; i++) {
 		// Enter your code here
+		if(page_table->table[i].v_index == index)
+			return page_table->table[i].next_lv; /* second level table */
 	}
 	return NULL;
 
@@ -91,8 +93,8 @@ addr_t alloc_mem(uint32_t size, struct pcb_t * proc) {
 	addr_t ret_mem = 0;
 	/* DO NOTHING HERE. This mem is obsoleted */
 
-	uint32_t num_pages = (size % PAGE_SIZE) ? size / PAGE_SIZE :
-		size / PAGE_SIZE + 1; // Number of pages we will use
+	uint32_t num_pages = (size % PAGE_SIZE) ? size / PAGE_SIZE : size / PAGE_SIZE + 1; // Number of pages we will use
+
 	int mem_avail = 0; // We could allocate new memory region or not?
 
 	/* First we must check if the amount of free memory in
@@ -103,6 +105,22 @@ addr_t alloc_mem(uint32_t size, struct pcb_t * proc) {
 	 * to know whether this page has been used by a process.
 	 * For virtual memory space, check bp (break pointer).
 	 * */
+
+	int free_pages[num_pages];
+	/* Check physical memory */
+	for(int i = 0, count = 0; i < NUM_PAGES; i++){
+		if(_mem_stat[i].proc == 0){ /* Free page */
+			free_pages[count++] = i;
+			if(count == num_pages){
+				mem_avail = 1; /* enough for physical memory */
+				break;
+			}
+		}
+	}
+
+	/* Check virtual memory */
+	if(proc->bp + num_pages * PAGE_SIZE >= RAM_SIZE)
+		mem_avail = 0;
 	
 	if (mem_avail) {
 		/* We could allocate new memory region to the process */
@@ -114,6 +132,30 @@ addr_t alloc_mem(uint32_t size, struct pcb_t * proc) {
 		 * 	- Add entries to segment table page tables of [proc]
 		 * 	  to ensure accesses to allocated memory slot is
 		 * 	  valid. */
+		for(int i = 0; i < num_pages; i++){
+			/* Update _mem_stat */
+			_mem_stat[free_pages[i]].proc = proc->pid;
+			_mem_stat[free_pages[i]].index = i;
+			if(i < num_pages - 1)
+				_mem_stat[free_pages[i]].next = free_pages[i + 1];
+			else
+				_mem_stat[free_pages[i]].next = -1;
+
+			/* Add entrie to table page */
+			addr_t addr = ret_mem + i * PAGE_SIZE;
+			struct trans_table_t * second_lv = get_trans_table(get_first_lv(addr), proc->page_table);
+
+			if(second_lv == NULL){
+				second_lv = (struct trans_table_t *) malloc(sizeof(struct trans_table_t));
+                second_lv->size = 0;
+				proc->page_table->table[proc->page_table->size].v_index = get_first_lv(addr); /* First level lv in addr */
+				proc->page_table->table[proc->page_table->size].next_lv = second_lv;
+				proc->page_table->size++;
+			}
+			second_lv->table[second_lv->size].v_index = get_second_lv(addr);
+            second_lv->table[second_lv->size].p_index = free_pages[i];
+            second_lv->size++;
+		}
 	}
 	pthread_mutex_unlock(&mem_lock);
 	return ret_mem;

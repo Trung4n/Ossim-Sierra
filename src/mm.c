@@ -79,6 +79,7 @@ int pte_set_fpn(uint32_t *pte, int fpn)
 
 /*
  * vmap_page_range - map a range of page at aligned address
+ * memphy -> vm
  */
 int vmap_page_range(struct pcb_t *caller,           // process call
                     int addr,                       // start address which is aligned to pagesz
@@ -86,24 +87,25 @@ int vmap_page_range(struct pcb_t *caller,           // process call
                     struct framephy_struct *frames, // list of the mapped frames
                     struct vm_rg_struct *ret_rg)    // return mapped region, the real mapped fp
 {                                                   // no guarantee all given pages are mapped
-  //struct framephy_struct *fpit;
-  int pgit = 0;
-  int pgn = PAGING_PGN(addr);
+  struct framephy_struct *fpit = frames;
+  int pgn = PAGING_PGN(addr); // Get starting page number
 
-  /* TODO: update the rg_end and rg_start of ret_rg 
-  //ret_rg->rg_end =  ....
-  //ret_rg->rg_start = ...
-  //ret_rg->vmaid = ...
-  */
+ /* Set region boundaries and VMA id (if needed elsewhere) */
+  ret_rg->rg_start = addr;
+  ret_rg->rg_end = addr + pgnum * PAGING_PAGESZ;
+  
+  /* Map each page in range to corresponding frame */
+  for(int pgit = 0; pgit < pgnum; pgit++){
+    if(fpit == NULL) // Not enough physical frames to map
+      break;
 
-  /* TODO map range of frame to address space
-   *      [addr to addr + pgnum*PAGING_PAGESZ
-   *      in page table caller->mm->pgd[]
-   */
+    // Set page table entry for virtual page number
+    pte_set_fpn(&caller->mm->pgd[pgn + pgit], fpit->fpn);
+    // Enqueue the page into FIFO list (used for page replacement tracking)
+    enlist_pgn_node(&caller->mm->fifo_pgn, pgn + pgit);
 
-  /* Tracking for later page replacement activities (if needed)
-   * Enqueue new usage page */
-  enlist_pgn_node(&caller->mm->fifo_pgn, pgn + pgit);
+    fpit = fpit->fp_next;
+  }
 
   return 0;
 }
@@ -114,30 +116,32 @@ int vmap_page_range(struct pcb_t *caller,           // process call
  * @req_pgnum : request page num
  * @frm_lst   : frame list
  */
+int alloc_pages_range(struct pcb_t *caller, int req_pgnum, struct framephy_struct **frm_lst){
+  struct framephy_struct *newfp_str;
 
-int alloc_pages_range(struct pcb_t *caller, int req_pgnum, struct framephy_struct **frm_lst)
-{
-  int pgit, fpn;
-  struct framephy_struct *newfp_str = NULL;
-
-  /* TODO: allocate the page 
-  //caller-> ...
-  //frm_lst-> ...
-  */
-
-  for (pgit = 0; pgit < req_pgnum; pgit++)
-  {
-  /* TODO: allocate the page 
-   */
-    if (MEMPHY_get_freefp(caller->mram, &fpn) == 0)
-    {
+  // Attempt to alloc each required page
+  for (int pgit = 0; pgit < req_pgnum; pgit++){
+    int fpn;    
+    // Try to get a free frame page from MEMRAM
+    if (MEMPHY_get_freefp(caller->mram, &fpn) == 0){
+      newfp_str = malloc(sizeof(struct framephy_struct));
+      newfp_str->owner = caller->mm; // Link frame to current mm
       newfp_str->fpn = fpn;
+      
+      // Push to front of frame list
+      newfp_str->fp_next = *frm_lst;
+      *frm_lst = newfp_str;
     }
-    else
-    { // TODO: ERROR CODE of obtaining somes but not enough frames
+    else{ // Not enough free frames => rollback and return error
+      while(*frm_lst != NULL){
+        // Release previously allocated frames
+        MEMPHY_put_freefp(caller->mram, (*frm_lst)->fpn);
+        *frm_lst = (*frm_lst)->fp_next;
+      }
+
+      return -3000; // ERR: partial allocation failure
     }
   }
-
   return 0;
 }
 
@@ -190,12 +194,10 @@ int vm_map_ram(struct pcb_t *caller, int astart, int aend, int mapstart, int inc
  * @dstfpn : destination physical page number (FPN)
  **/
 int __swap_cp_page(struct memphy_struct *mpsrc, int srcfpn,
-                   struct memphy_struct *mpdst, int dstfpn)
-{
+                   struct memphy_struct *mpdst, int dstfpn){
   int cellidx;
   int addrsrc, addrdst;
-  for (cellidx = 0; cellidx < PAGING_PAGESZ; cellidx++)
-  {
+  for (cellidx = 0; cellidx < PAGING_PAGESZ; cellidx++){
     addrsrc = srcfpn * PAGING_PAGESZ + cellidx;
     addrdst = dstfpn * PAGING_PAGESZ + cellidx;
 
@@ -227,13 +229,16 @@ int init_mm(struct mm_struct *mm, struct pcb_t *caller)
   enlist_vm_rg_node(&vma0->vm_freerg_list, first_rg);
 
   /* TODO update VMA0 next */
-  // vma0->next = ...
+  vma0->vm_next = NULL;
 
   /* Point vma owner backward */
   vma0->vm_mm = mm; 
 
   /* TODO: update mmap */
-  //mm->mmap = ...
+  mm->mmap = vma0;
+
+  /* Bonus */
+  caller->mm = mm;
 
   return 0;
 }
@@ -248,15 +253,15 @@ struct vm_rg_struct *init_vm_rg(int rg_start, int rg_end)
 
   return rgnode;
 }
-
-int enlist_vm_rg_node(struct vm_rg_struct **rglist, struct vm_rg_struct *rgnode)
-{
+/* add region to region list */
+int enlist_vm_rg_node(struct vm_rg_struct **rglist, struct vm_rg_struct *rgnode){
   rgnode->rg_next = *rglist;
   *rglist = rgnode;
 
   return 0;
 }
 
+/* add page to page list*/
 int enlist_pgn_node(struct pgn_t **plist, int pgn)
 {
   struct pgn_t *pnode = malloc(sizeof(struct pgn_t));
@@ -352,7 +357,12 @@ int print_pgtbl(struct pcb_t *caller, uint32_t start, uint32_t end)
   {
     printf("%08ld: %08x\n", pgit * sizeof(uint32_t), caller->mm->pgd[pgit]);
   }
-
+#ifdef DEBUG
+  for (pgit = pgn_start; pgit < pgn_end; pgit++){
+    printf("Page Number: %d -> Frame Number: %d\n", pgit, PAGING_FPN(caller->mm->pgd[pgit]));
+  }
+  printf("================================================================\n");
+#endif
   return 0;
 }
 

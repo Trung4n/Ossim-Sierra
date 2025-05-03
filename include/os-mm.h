@@ -75,8 +75,9 @@ struct memphy_struct {
    int maxsz;
    
    /* Sequential device fields */ 
-   int rdmflg;
-   int cursor;
+   int rdmflg; /* 0 if sequential acess, 1 if random access */
+   int cursor; /* if rdmflg = 0 read/write, otherwise not important */
+   /* SWAP need sequential access, RAM need random access*/
 
    /* Management structure */
    struct framephy_struct *free_fp_list;

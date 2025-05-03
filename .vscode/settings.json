@@ -1,0 +1,22 @@
+{
+    "files.associations": {
+        "stdlib.h": "c",
+        "queue.h": "c",
+        "common.h": "c",
+        "os-cfg.h": "c",
+        "os-mm.h": "c",
+        "cstdlib": "c",
+        "mm.h": "c",
+        "bitops.h": "c",
+        "syscall.h": "c",
+        "*.lst": "c",
+        "libmem.h": "c",
+        "typeinfo": "c",
+        "sched.h": "c",
+        "array": "c",
+        "string_view": "c",
+        "initializer_list": "c",
+        "pthread.h": "c"
+    },
+    "C_Cpp.errorSquiggles": "disabled"
+}
