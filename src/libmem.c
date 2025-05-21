@@ -24,8 +24,6 @@
 
 static pthread_mutex_t mmvm_lock = PTHREAD_MUTEX_INITIALIZER;
 
-#define PAGING_PAGE_COUNT(start, end) (PAGING_PAGE_ALIGNSZ(end) - PAGING_PAGE_ALIGNSZ(start)) / PAGING_PAGESZ
-
 /*enlist_vm_freerg_list - add new rg to freerg_list
  *@mm: memory region
  *@rg_elmt: new region
@@ -275,41 +273,49 @@ int libfree(struct pcb_t *proc, uint32_t reg_index){
 int pg_getpage(struct mm_struct *mm, int pgn, int *fpn, struct pcb_t *caller){
   uint32_t pte = mm->pgd[pgn];
 
+  if(pte < 0){ // page not alloc
+    return -1;
+  }
+
   if (!PAGING_PAGE_PRESENT(pte)){ /* Page is not online, make it actively living */
+    pthread_mutex_lock(&mmvm_lock);
     int vicpgn, swpfpn; 
     int vicfpn;
+    int dsrfpn = PAGING_PTE_FPN(pte); // find pgn in backing store
     uint32_t vicpte;
 
-    // Pick victim + alloc swpfpn
+    // Pick victim + find free swpfpn
     if(MEMPHY_get_freefp(caller->active_mswp, &swpfpn) < 0 || find_victim_page(caller->mm, &vicpgn) < 0)
       return -1;
     
     // Victim info
     vicpte = mm->pgd[vicpgn];
     vicfpn = PAGING_PTE_FPN(vicpte);
+
     struct sc_regs regs;
     regs.a1 = SYSMEM_SWP_OP; 
     regs.a2 = (uint32_t) vicfpn;
     regs.a3 = (uint32_t) swpfpn;
 
-    // Swap out victim: RAM -> SWAP
+    // Swap out: RAM -> SWAP
     if(syscall(caller, 17, &regs) < 0)
       return -1;
 
-    // Bring in requested page: SWAP -> RAM
-    if(__swap_cp_page(caller->mram, vicfpn, caller->active_mswp, swpfpn) < 0)
+    // Swap in: SWAP -> RAM
+    if(__swap_cp_page(caller->active_mswp, dsrfpn, caller->mram, vicfpn) < 0)
       return -1;
 
     // Mark victim as swapped
-    pte_set_swap(&mm->pgd[vicpgn], 0, swpfpn); 
+    pte_set_swap(&mm->pgd[vicpgn], 0, swpfpn);
 
     // Set new page table entry
     pte_set_fpn(&mm->pgd[pgn], vicfpn);
 
     // FIFO: add new pgn to FIFO queue
     enlist_pgn_node(&caller->mm->fifo_pgn, pgn);
+    pthread_mutex_unlock(&mmvm_lock);
   }
-  *fpn = PAGING_FPN(mm->pgd[pgn]); // out: RAM fpn
+  *fpn = PAGING_FPN(mm->pgd[pgn]);
 
   return 0;
 }
@@ -320,17 +326,18 @@ int pg_getpage(struct mm_struct *mm, int pgn, int *fpn, struct pcb_t *caller){
  *@value: value
  *
  */
+/* 8 bit offset */
 int pg_getval(struct mm_struct *mm, int addr, BYTE *data, struct pcb_t *caller){
   int pgn = PAGING_PGN(addr);                   // Page num
   int off = PAGING_OFFST(addr);                 // Offset
   int fpn;                                      // Frame num
 
   // Ensure page present, swap in if needed
-  if (pg_getpage(mm, pgn, &fpn, caller) != 0)
+  if (pg_getpage(mm, pgn, &fpn, caller) < 0)
     return -1; /* invalid page access */
 
   // Calc phys addr = frame base + offset
-  int phyaddr = fpn * PAGING_ADDR_FPN_LOBIT + off;
+  int phyaddr = fpn * PAGING_PAGESZ + off;
   // MEMPHY_read(caller->mram, phyaddr, data);
 
   // Setup syscall regs for IO READ.
@@ -359,8 +366,7 @@ int pg_setval(struct mm_struct *mm, int addr, BYTE value, struct pcb_t *caller){
   int pgn = PAGING_PGN(addr);               
   int off = PAGING_OFFST(addr);     
   int fpn;                               
-  
-  if (pg_getpage(mm, pgn, &fpn, caller) != 0){
+  if (pg_getpage(mm, pgn, &fpn, caller) < 0){
     return -1;
   }
 

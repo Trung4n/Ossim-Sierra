@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <semaphore.h>
 
 static int time_slot;
 static int num_cpus;
@@ -44,6 +45,8 @@ struct cpu_args {
 	int id;
 };
 
+sem_t sync_sem;
+static int num_act_cpus;
 
 static void * cpu_routine(void * args) {
 	struct timer_id_t * timer_id = ((struct cpu_args*)args)->timer_id;
@@ -52,23 +55,21 @@ static void * cpu_routine(void * args) {
 	int time_left = 0;
 	struct pcb_t * proc = NULL;
 	while (1) {
+		// while(turn == 0); // wait
 		/* Check the status of current process */
 		if (proc == NULL) {
 			/* No process is running, the we load new process from
 		 	* ready queue */
 			proc = get_proc();
 			if (proc == NULL) {
-				if(done){
+				if(done){ // avoid inf loop
 					printf("\tCPU %d stopped\n", id);
 					break;
 				}
+				sem_post(&sync_sem);
                 next_slot(timer_id);
                 continue; /* First load failed. skip dummy load */
             }
-// #ifdef DEBUG
-// 			printf("\tCPU %d: Get process %2d from mlq queue\n",
-// 				id, proc->pid);
-// #endif
 		}else if (proc->pc == proc->code->size) {
 			/* The porcess has finish it job */
 			printf("\tCPU %d: Processed %2d has finished\n",
@@ -93,6 +94,7 @@ static void * cpu_routine(void * args) {
 		}else if (proc == NULL) {
 			/* There may be new processes to run in
 			 * next time slots, just skip current slot */
+			sem_post(&sync_sem);
 			next_slot(timer_id);
 			continue;
 		}else if (time_left == 0) {
@@ -104,9 +106,13 @@ static void * cpu_routine(void * args) {
 		/* Run current process */
 		run(proc);
 		time_left--;
+		
+		sem_post(&sync_sem); 
 		next_slot(timer_id);
+		
 	}
 	detach_event(timer_id);
+	num_act_cpus--;
 	pthread_exit(NULL);
 }
 
@@ -126,9 +132,13 @@ static void * ld_routine(void * args) {
 #ifdef MLQ_SCHED
 		proc->prio = ld_processes.prio[i];
 #endif
+		for (int i = 0; i < num_act_cpus; i++) {
+			sem_wait(&sync_sem); 
+		}
 		while (current_time() < ld_processes.start_time[i]) {
 			next_slot(timer_id);
 		}
+		
 #ifdef MM_PAGING
 		proc->mm = malloc(sizeof(struct mm_struct));
 		init_mm(proc->mm, proc);
@@ -157,6 +167,7 @@ static void read_config(const char * path) {
 		exit(1);
 	}
 	fscanf(file, "%d %d %d\n", &time_slot, &num_cpus, &num_processes);
+	num_act_cpus = num_cpus;
 	ld_processes.path = (char**)malloc(sizeof(char*) * num_processes);
 	ld_processes.start_time = (unsigned long*)
 		malloc(sizeof(unsigned long) * num_processes);
@@ -258,6 +269,8 @@ int main(int argc, char * argv[]) {
 	/* Init scheduler */
 	init_scheduler();
 
+	sem_init(&sync_sem, 0, 0); 
+
 	/* Run CPU and loader */
 #ifdef MM_PAGING
 	pthread_create(&ld, NULL, ld_routine, (void*)mm_ld_args);
@@ -277,6 +290,8 @@ int main(int argc, char * argv[]) {
 
 	/* Stop timer */
 	stop_timer();
+
+	sem_destroy(&sync_sem);
 
 	return 0;
 

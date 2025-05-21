@@ -110,7 +110,10 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, int inc_sz){
   cur_vma->sbrk += inc_sz;
 
   // Request physical memory mapping for the extended region
-  if (vm_map_ram(caller, area->rg_start, area->rg_end, old_end, incnumpage , newrg) < 0){      
+  if (vm_map_ram(caller, area->rg_start, area->rg_end, old_end, incnumpage , newrg) < 0){  
+    /* Roll back */
+    cur_vma->vm_end -= inc_sz;
+    cur_vma->sbrk -= inc_sz;    
     return -1; /* Map the memory to MEMRAM */
   }
     

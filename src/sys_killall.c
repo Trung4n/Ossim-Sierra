@@ -15,6 +15,9 @@
 #include "queue.h"
 #include <string.h>
 #include <stdlib.h>
+#include <pthread.h>
+
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
 int __sys_killall(struct pcb_t *caller, struct sc_regs* regs){
     char proc_name[100];
@@ -47,22 +50,24 @@ int __sys_killall(struct pcb_t *caller, struct sc_regs* regs){
 
         // Match name by checking if path contains proc_name
         if (strstr(target_proc->path, proc_name) != NULL) {
-
+            pthread_mutex_lock(&lock);
 #ifdef DEBUG
             printf("Terminating process PID: %d PRIO: %d\n", target_proc->pid, target_proc->prio);
 #endif      
             // Mark process as terminated by setting PC to EOF
-            peek_at_index(caller->running_list, i);
+            peek_at_id(caller->running_list, target_proc->pid);
             target_proc->pc = target_proc->code->size;  // Force exit
+            pthread_mutex_unlock(&lock);
             continue; // Stay at index i since current slot is shifted
         } 
         i++;
     }
-
+    
+#ifdef MLQ_SCHED
     /* === Traverse MLQ ready queues to kill procs with matching name === */
     for(int q = 0; q < MAX_PRIO; q++){
         i = 0;
-        while(!empty(&caller->mlq_ready_queue[q]) && i < caller->mlq_ready_queue[q].size) {
+        while(i < caller->mlq_ready_queue[q].size) {
             struct pcb_t *target_proc = caller->mlq_ready_queue[q].proc[i];
             
             if (target_proc == NULL || target_proc->pid == caller->pid) {
@@ -70,16 +75,19 @@ int __sys_killall(struct pcb_t *caller, struct sc_regs* regs){
                 continue;
             }
             if (strstr(target_proc->path, proc_name) != NULL) {
+                pthread_mutex_lock(&lock);
 #ifdef DEBUG
                 printf("Terminating process PID: %d PRIO: %d\n", target_proc->pid, target_proc->prio);
 #endif      
                 peek_at_index(&caller->mlq_ready_queue[q], i); // Dealloc PCB
                 free(target_proc);
+                pthread_mutex_unlock(&lock);
                 continue;
             }
             i++;
         }
     }
+#endif
 
     return 0; 
 }
